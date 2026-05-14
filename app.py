@@ -1,9 +1,33 @@
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import base64
+
+# Background Image
+def get_base64(file):
+    with open(file, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+bg_image = get_base64("Photo.jpg")
+
+page_bg_img = f"""
+<style>
+
+.stApp {{
+    background-image: url("data:image/jpg;base64,{bg_image}");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+}}
+
+</style>
+"""
+
+st.markdown(page_bg_img, unsafe_allow_html=True)
 
 # Login System
-
 USERNAME = "JINKAL"
 PASSWORD = "JINKAL"
 
@@ -16,24 +40,38 @@ password = st.sidebar.text_input(
 )
 
 if username != USERNAME or password != PASSWORD:
-    st.warning("""🌟 Welcome to the Future of GST Automation 🌟
+    st.markdown("""
+<div style='
+color:white;
+background:rgba(0,0,0,0.55);
+padding:25px;
+border-radius:20px;
+font-size:22px;
+font-weight:bold;
+'>
 
-Every expert was once a beginner.  
-Every dashboard starts with raw data.  
-Every success starts with one step forward.
+🌟 Welcome to the Future of GST Automation 🌟
 
-📊 Analyze Smarter  
-⚡ Reconcile Faster  
-💡 Build Better Insights  
+Every expert was once a beginner.<br>
+Every dashboard starts with raw data.<br>
+Every success starts with one step forward. 🚀
+
+📊 Analyze Smarter<br>
+⚡ Reconcile Faster<br>
+💡 Build Better Insights
 
 “Dream big. Start small. Stay consistent.”
 
+<br><br>
+
 🔐 Login to continue your journey
-""")
+
+</div>
+""", unsafe_allow_html=True)
     st.stop()
 
 
-st.title("SANTOSH GST RECONCILIATION APP")
+st.title("SANTOSH GST RECO. APP")
 
 purchase_file = st.file_uploader(
     "Upload Purchase Register",
