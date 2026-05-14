@@ -437,23 +437,21 @@ if purchase_file and gstr2b_file:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # AI GST Assistant
+# AI GST Assistant
 
-    st.subheader("AI GST Assistant")
+st.subheader("AI GST Assistant")
 
-    user_question = st.text_input(
-        "Ask anything about reconciliation"
-    )
+user_question = st.text_input(
+    "Ask anything about reconciliation"
+)
+if user_question:
 
-    if user_question:
-
-        question = user_question.lower()
+    question = user_question.lower()
 
     # Mismatch Question
     if "mismatch" in question:
-
         st.success(
-            f"There are {mismatch_count} mismatched invoices."
+            f"There are {mismatch_count}mismatched invoices."
         )
 
     # Matched Question
@@ -476,20 +474,20 @@ if purchase_file and gstr2b_file:
             f"{high_risk} invoices are High Risk."
         )
 
-    # Missing Invoice Question
+            # Missing Invoice Question
     elif "missing" in question:
 
-        missing_count = len(
-            filtered_df[
+            missing_count = len(
+                filtered_df[
                 filtered_df["Match_Status"] == "Missing in 2B"
             ]
         )
 
-        st.success(
-            f"{missing_count} invoices are missing in 2B."
+            st.success(
+                f"{missing_count} invoices are missing in 2B."
         )
 
-    # Vendor Question
+# Vendor Question
     elif "vendor" in question:
 
         vendor_summary_df = filtered_df.groupby(
