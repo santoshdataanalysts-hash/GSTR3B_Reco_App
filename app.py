@@ -9,7 +9,7 @@ def get_base64(file):
         data = f.read()
     return base64.b64encode(data).decode()
 
-bg_image = get_base64("Photo.jpg")
+bg_image = get_base64("Photo2.jpg")
 
 page_bg_img = f"""
 <style>
