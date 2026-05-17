@@ -40,8 +40,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_reports (
     tax_difference REAL,
     tax_status TEXT,
     mismatch_reason TEXT,
-    risk_level TEXT,
-    duplicate_flag TEXT
+    risk_level TEXT
 )
 """)
 
@@ -540,7 +539,8 @@ STANDARD_COLUMNS = {
         "gstin",
         "suppliergstin",
         "vendorgstin",
-        "gstinofsupplier"
+        "gstinofsupplier",
+        "gstinuinofsupplier"
     ],
 
     "invoice_no": [
@@ -558,10 +558,15 @@ STANDARD_COLUMNS = {
     ],
 
     "taxable_value": [
+
         "taxablevalue",
         "taxableamount",
         "taxablevalueofrec",
-        "taxablevalueofpay"
+        "taxablevalueofpay",
+        "taxablevalueofrecipient",
+        "taxablevalueofsupply",
+        "taxablevalue₹",
+        "taxablevalueofrec."
     ],
 
     "igst": [
@@ -587,13 +592,89 @@ STANDARD_COLUMNS = {
 # READ FILE FUNCTION
 # -----------------------------------
 
-def read_file(file):
+def read_file(file, is_gstr2b=False):
 
+    # CSV FILE
     if file.name.endswith(".csv"):
+
         return pd.read_csv(file)
 
+    # EXCEL FILE
     elif file.name.endswith(".xlsx"):
-        return pd.read_excel(file)
+
+        # NORMAL PURCHASE REGISTER
+        if not is_gstr2b:
+
+            df = pd.read_excel(file)
+
+            # CLEAN COLUMN NAMES
+            df.columns = (
+                df.columns
+                .astype(str)
+                .str.strip()
+            )
+
+            return df
+
+        # GSTR2B SPECIAL LOGIC
+        else:
+
+            # LOAD EXCEL
+            xls = pd.ExcelFile(file)
+
+            target_sheet = None
+
+            # FIND B2B SHEET
+            for sheet in xls.sheet_names:
+
+                if "B2B" in sheet.upper():
+
+                    target_sheet = sheet
+                    break
+
+            # READ MULTI HEADER
+            df = pd.read_excel(
+
+                file,
+
+                sheet_name=target_sheet,
+
+                header=[4, 5]
+            )
+
+            # FLATTEN HEADERS
+            new_columns = []
+
+            for col1, col2 in df.columns:
+
+                if "Unnamed" in str(col2):
+
+                    new_columns.append(
+                        str(col1).strip()
+                    )
+
+                else:
+
+                    new_columns.append(
+                        str(col2).strip()
+                    )
+
+            df.columns = new_columns
+
+            # REMOVE EMPTY ROWS
+            df = df.dropna(how="all")
+
+            # REMOVE EMPTY COLUMNS
+            df = df.dropna(axis=1, how="all")
+
+            # CLEAN COLUMN NAMES
+            df.columns = (
+                df.columns
+                .astype(str)
+                .str.strip()
+            )
+
+            return df
 
 # -----------------------------------
 # AUTO COLUMN MAPPING
@@ -662,8 +743,7 @@ def save_to_database(df):
         "tax_difference",
         "tax_status",
         "mismatch_reason",
-        "risk_level",
-        "duplicate_flag"
+        "risk_level"
     ]
 
     df_to_save.to_sql(
@@ -884,8 +964,31 @@ if st.sidebar.button("Logout"):
 
 if purchase_file and gstr2b_file:
 
-    purchase_df = read_file(purchase_file)
-    gstr2b_df = read_file(gstr2b_file)
+    # -----------------------------------
+    # READ FILES
+    # -----------------------------------
+
+    purchase_df = read_file(
+        purchase_file,
+        is_gstr2b=False
+    )
+
+    gstr2b_df = read_file(
+        gstr2b_file,
+        is_gstr2b=True
+    )
+
+    # -----------------------------------   
+    # DEBUG INFO
+    # -----------------------------------
+
+    # st.write("Purchase Shape:", purchase_df.shape)
+
+    # st.write("GSTR2B Shape:", gstr2b_df.shape)
+
+    # st.write("GSTR2B Columns:")
+
+    # st.write(gstr2b_df.columns.tolist())
 
     st.success("Files Uploaded Successfully")
 
@@ -909,7 +1012,12 @@ if purchase_file and gstr2b_file:
 
         "Mapped Column": gstr2b_mapping.values()
     })
+    # st.write("Purchase Mapping")
+    # st.write(purchase_mapping)
 
+    # st.write("GSTR2B Mapping")
+    # st.write(gstr2b_mapping)
+    # st.write(gstr2b_df.columns.tolist())
     # -----------------------------------
     # EXTRACT STANDARD COLUMNS
     # -----------------------------------
@@ -919,6 +1027,34 @@ if purchase_file and gstr2b_file:
 
     g2b_gstin = gstr2b_mapping["gstin"]
     g2b_invoice = gstr2b_mapping["invoice_no"]
+    
+    g2b_vendor = "Trade/Legal name"
+
+    
+    # REMOVE B2C ENTRIES
+
+    purchase_df = purchase_df[
+        purchase_df[pr_gstin]
+        .notna()
+            
+    ]
+
+    purchase_df = purchase_df[
+
+        purchase_df[pr_gstin]
+        .astype(str)
+        .str.strip()
+        != ""
+    ]
+
+    # KEEP ONLY VALID GSTIN
+
+    purchase_df = purchase_df[
+
+        purchase_df[pr_gstin]
+        .astype(str)
+        .str.len() == 15
+    ]
 
     # -----------------------------------
     # TAX COLUMNS
@@ -1005,6 +1141,7 @@ if purchase_file and gstr2b_file:
     gstr2b_df = gstr2b_df.groupby(
         [
             g2b_gstin,
+            g2b_vendor,
             g2b_invoice
         ],
         as_index=False
@@ -1033,27 +1170,43 @@ if purchase_file and gstr2b_file:
     # -----------------------------------
 
     filtered_df = purchase_df.merge(
-        gstr2b_df[["MATCH_KEY", "G2B_TOTAL_TAX"]],
-        on="MATCH_KEY",
-        how="left"
-    )
 
+        gstr2b_df[
+            [
+                "MATCH_KEY",
+                "G2B_TOTAL_TAX"
+            ]
+        ],
+
+        on="MATCH_KEY",
+
+        how="outer",
+
+        indicator=True
+    )
+    
+    
     # -----------------------------------
     # MATCH STATUS
     # -----------------------------------
 
-    filtered_df["MATCH_STATUS"] = filtered_df[
-        "MATCH_KEY"
-    ].isin(
-        gstr2b_df["MATCH_KEY"]
-    )
+    def match_status(row):
 
-    filtered_df["MATCH_STATUS"] = filtered_df[
-        "MATCH_STATUS"
-    ].map({
-        True: "Matched",
-        False: "Missing in GSTR2B"
-    })
+        if row["_merge"] == "both":
+
+            return "Matched"
+
+        elif row["_merge"] == "left_only":
+
+            return "Missing in GSTR2B"
+
+        else:
+
+            return "Extra in GSTR2B"
+
+    filtered_df["MATCH_STATUS"] = (
+        filtered_df.apply(match_status, axis=1)
+    )
 
     # -----------------------------------
     # TAX DIFFERENCE
@@ -1130,25 +1283,6 @@ if purchase_file and gstr2b_file:
         risk_level,
         axis=1
     )
-
-    # -----------------------------------
-    # DUPLICATE INVOICE DETECTION
-    # -----------------------------------
-
-    filtered_df["DUPLICATE_FLAG"] = filtered_df.duplicated(
-        subset=[
-            pr_gstin,
-            pr_invoice
-        ],
-        keep=False
-    )
-
-    filtered_df["DUPLICATE_FLAG"] = filtered_df[
-        "DUPLICATE_FLAG"
-    ].map({
-        True: "Duplicate Invoice",
-        False: "Unique Invoice"
-    })
 
     # -----------------------------------
     # SIDEBAR FILTERS
@@ -1233,36 +1367,6 @@ if purchase_file and gstr2b_file:
         ]
 
     # -----------------------------------
-    # KPI CALCULATIONS
-    # -----------------------------------
-
-    total_invoices = len(filtered_df)
-
-    matched_count = len(
-        filtered_df[
-            filtered_df["MATCH_STATUS"] == "Matched"
-        ]
-    )
-
-    missing_count = len(
-        filtered_df[
-            filtered_df["MATCH_STATUS"] == "Missing in GSTR2B"
-        ]
-    )
-
-    duplicate_count = len(
-        filtered_df[
-            filtered_df["DUPLICATE_FLAG"] == "Duplicate Invoice"
-        ]
-    )
-
-    high_risk_count = len(
-        filtered_df[
-            filtered_df["RISK_LEVEL"] == "High"
-        ]
-    )
-
-    # -----------------------------------
     # KPI DASHBOARD
     # -----------------------------------
 
@@ -1284,22 +1388,71 @@ if purchase_file and gstr2b_file:
     </style>
     """, unsafe_allow_html=True)
 
+    # -----------------------------------
+    # KPI CALCULATIONS
+    # -----------------------------------
+
+    purchase_invoice_count = len(
+        filtered_df[
+            filtered_df["MATCH_STATUS"]
+            != "Extra in GSTR2B"
+        ]
+    )
+
+    gstr2b_rows = len(gstr2b_df)
+
+    matched_count = len(
+        filtered_df[
+            filtered_df["MATCH_STATUS"]
+            == "Matched"
+        ]
+    )
+
+    missing_count = len(
+        filtered_df[
+            filtered_df["MATCH_STATUS"]
+            == "Missing in GSTR2B"
+        ]
+    )
+
+    high_risk_count = len(
+        filtered_df[
+            filtered_df["RISK_LEVEL"]
+            == "High"
+        ]
+    )
+
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
     with kpi1:
-        st.metric("Total Invoices", total_invoices)
+        st.metric(
+            "Purchase Invoices",
+            purchase_invoice_count
+        )
 
     with kpi2:
-        st.metric("Matched", matched_count)
+        st.metric(
+            "GSTR2B Rows",
+            gstr2b_rows
+        )
 
     with kpi3:
-        st.metric("Missing", missing_count)
+        st.metric(
+            "Matched",
+            matched_count
+        )
 
     with kpi4:
-        st.metric("Duplicate", duplicate_count)
+        st.metric(
+            "Missing",
+            missing_count
+        )
 
     with kpi5:
-        st.metric("High Risk", high_risk_count)
+        st.metric(
+            "High Risk",
+            high_risk_count
+        )
 
     # -----------------------------------
     # MATCH STATUS CHART
@@ -1411,7 +1564,7 @@ if purchase_file and gstr2b_file:
     st.subheader("Vendor Summary")
 
     vendor_summary = filtered_df.groupby(
-        pr_gstin,
+        [pr_gstin],
         as_index=False
     ).agg({
         "PR_TOTAL_TAX": "sum",
@@ -1434,47 +1587,75 @@ if purchase_file and gstr2b_file:
     )
 
     # -----------------------------------
-    # VENDOR RISK SCORE
+    # VENDOR RISK SCORING
     # -----------------------------------
 
-    vendor_summary["Risk Score"] = (
-        abs(vendor_summary["Total Tax Difference"])
-        / 100
-    ).round(0)
+    vendor_risk = filtered_df.groupby(
 
-    def vendor_risk(score):
+    [pr_gstin]
 
-        if score > 50:
-            return "High Risk"
+    ).agg({
 
-        elif score > 20:
-            return "Medium Risk"
+        "PR_TOTAL_TAX": "sum",
 
-        else:
-            return "Low Risk"
+        "MATCH_STATUS": lambda x: (
+            x == "Matched"
+        ).sum(),
 
-    vendor_summary["Vendor Risk"] = (
-        vendor_summary["Risk Score"]
-        .apply(vendor_risk)
+        "TAX_DIFFERENCE": "sum"
+
+    }).reset_index()
+
+    vendor_risk.columns = [
+
+        "GSTIN",
+
+        "Total Tax",
+
+        "Matched Invoices",
+
+        "Total Tax Difference"
+    ]
+
+    vendor_risk["Risk Score"] = (
+
+        vendor_risk["Total Tax Difference"]
+
+        /
+
+        vendor_risk["Total Tax"]
+
+        * 100
+
+    ).fillna(0).round(2)
+
+    vendor_risk["Vendor Risk"] = vendor_risk[
+        "Risk Score"
+    ].apply(
+
+        lambda x:
+
+        "High Risk"
+
+        if x > 50
+
+        else (
+
+            "Medium Risk"
+
+            if x > 20
+
+            else "Low Risk"
+        )
     )
 
     st.subheader("Vendor Risk Scoring")
 
     st.dataframe(
 
-        vendor_summary[
-            [
-                "GSTIN",
-                "Total Tax",
-                "Matched Invoices",
-                "Total Tax Difference",
-                "Risk Score",
-                "Vendor Risk"
-            ]
-        ],
-        width="stretch",
-        height=250,
-        hide_index=True
+        vendor_risk,
+
+        use_container_width=True
     )
 
     # -----------------------------------
@@ -1493,8 +1674,7 @@ if purchase_file and gstr2b_file:
                 "G2B_TOTAL_TAX",
                 "MATCH_STATUS",
                 "MISMATCH_REASON",
-                "RISK_LEVEL",
-                "DUPLICATE_FLAG"
+                "RISK_LEVEL"
             ]
         ],
         width="stretch",
@@ -1554,7 +1734,6 @@ if purchase_file and gstr2b_file:
                     "TAX_STATUS",
                     "MISMATCH_REASON",
                     "RISK_LEVEL",
-                    "DUPLICATE_FLAG"
                 ]
             ]
         )
@@ -1661,8 +1840,8 @@ st.markdown("""
 <div style='
 text-align:center;
 padding:20px;
-font-size:18px;
-color:white;
+font-size:22px;
+color:green;
 '>
 
 Developed By <b>SANTOSH PARIHAR</b>
